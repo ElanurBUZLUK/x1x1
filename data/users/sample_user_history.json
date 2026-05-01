@@ -1,0 +1,6 @@
+[
+  {"user_id": "u_001", "question_id": "kpss_vat_0001", "lesson": "Vatandaşlık", "topic": "Anayasa Hukuku", "difficulty": 0.42, "is_correct": false, "response_time": 75},
+  {"user_id": "u_001", "question_id": "kpss_vat_0002", "lesson": "Vatandaşlık", "topic": "Anayasa Hukuku", "difficulty": 0.58, "is_correct": false, "response_time": 91},
+  {"user_id": "u_001", "question_id": "kpss_tar_0002", "lesson": "Tarih", "topic": "İnkılap Tarihi", "difficulty": 0.36, "is_correct": true, "response_time": 34},
+  {"user_id": "u_001", "question_id": "kpss_tur_0001", "lesson": "Türkçe", "topic": "Paragraf", "difficulty": 0.50, "is_correct": true, "response_time": 41}
+]
