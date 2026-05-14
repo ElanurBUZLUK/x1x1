@@ -4,24 +4,22 @@ from functools import lru_cache
 from typing import List, Literal
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from src.adaptive_retriever import AdaptiveQuestionRetriever
 from src.explanation_generator import ExplanationGenerator
-from src.feedback_updater import make_answer_event, make_open_answer_attempt_event
+from src.feedback_updater import make_open_answer_attempt_event
 from src.open_answer_evaluator import OpenAnswerEvaluator
 from src.question_ingest import build_kpss_vector_db
 from src.rag_engine import PDFRAGEngine
 from src.schemas import (
     AnswerHistoryEvent,
-    KPSSQuestion,
     OpenAnswerAttemptEvent,
     OpenAnswerEvaluation,
     RecommendedQuestion,
     StudentProfile,
-    UserAnswerEvent,
 )
-from src.user_profile import append_answer_history_event, append_user_answer_event, build_student_profile, load_user_history
+from src.user_profile import append_answer_history_event, build_student_profile, load_user_history
 
 app = FastAPI(
     title="KPSS Adaptive RAG API",
@@ -70,39 +68,8 @@ class RecommendQuestionRequest(BaseModel):
     rebuild_index: bool = False
 
 
-class SubmitAnswerRequest(BaseModel):
-    user_id: str = "u_001"
-    question_id: str
-    user_answer: str = Field(..., min_length=1, max_length=1)
-    response_time: float | None = Field(default=None, ge=0.0)
-    history: list[AnswerHistoryEvent] | None = None
-    persist: bool = Field(
-        default=True,
-        description="history gönderilmediyse cevabı data/users/sample_user_history.json içine ekler.",
-    )
-
-    @field_validator("user_answer")
-    @classmethod
-    def validate_user_answer(cls, value: str) -> str:
-        value = value.strip().upper()
-        if value not in {"A", "B", "C", "D", "E"}:
-            raise ValueError("user_answer A/B/C/D/E olmalı.")
-        return value
-
-
-class SubmitAnswerResponse(BaseModel):
-    is_correct: bool
-    correct_answer: str
-    explanation: str
-    updated_user_level_preview: float
-    updated_profile: StudentProfile
-
-
 class EvaluateOpenAnswerRequest(BaseModel):
-    """Serbest metin / konuşmadan metne çevrilmiş öğrenci cevabını değerlendirir.
-
-    Şıklı cevap endpointinden ayrıdır; burada A/B/C/D/E zorunluluğu yoktur.
-    """
+    """Serbest metin / konuşmadan metne çevrilmiş öğrenci cevabını değerlendirir."""
 
     user_id: str = "u_001"
     question_id: str | None = None
@@ -351,44 +318,3 @@ def submit_open_answer(request: SubmitOpenAnswerRequest) -> SubmitOpenAnswerResp
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Açık cevap kaydetme hatası: {exc}") from exc
 
-
-@app.post("/kpss/submit-answer", response_model=SubmitAnswerResponse)
-def submit_answer(request: SubmitAnswerRequest) -> SubmitAnswerResponse:
-    try:
-        history = request.history if request.history is not None else load_user_history()
-        profile = build_student_profile(history, user_id=request.user_id)
-        retriever = get_adaptive_retriever()
-        question: KPSSQuestion | None = retriever.questions_by_id.get(request.question_id)
-        if question is None:
-            raise HTTPException(status_code=404, detail=f"Soru bulunamadı: {request.question_id}")
-
-        is_correct = request.user_answer == question.correct_answer
-        explanation = get_explainer().generate(question, profile, user_answer=request.user_answer)
-
-        new_event = make_answer_event(
-            user_id=request.user_id,
-            question=question,
-            user_answer=request.user_answer,
-            response_time=request.response_time,
-        )
-
-        if request.history is None and request.persist:
-            updated_history = append_user_answer_event(new_event)
-        else:
-            updated_history = [*history, new_event]
-
-        updated_profile = build_student_profile(updated_history, user_id=request.user_id)
-
-        return SubmitAnswerResponse(
-            is_correct=is_correct,
-            correct_answer=question.correct_answer,
-            explanation=explanation,
-            updated_user_level_preview=updated_profile.overall_level,
-            updated_profile=updated_profile,
-        )
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Cevap değerlendirme hatası: {exc}") from exc

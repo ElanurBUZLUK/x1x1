@@ -32,8 +32,9 @@ def main() -> None:
     print(f"Ders/Konu: {q.lesson} / {q.topic}")
     print(f"Zorluk: {q.difficulty:.2f}")
     print(q.question_text)
-    for key, value in sorted(q.options.items()):
-        print(f"{key}) {value}")
+    print(f"Referans cevap: {q.reference_answer}")
+    if q.key_concepts:
+        print(f"Ana kavramlar: {', '.join(q.key_concepts)}")
 
     print("\n=== NEDEN BU SORU? ===")
     print(recommendation.selection_reason)

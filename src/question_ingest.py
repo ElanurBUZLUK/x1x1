@@ -36,7 +36,7 @@ def question_to_document(question: KPSSQuestion) -> Document:
             "topic": question.topic,
             "subtopic": question.subtopic or "",
             "difficulty": question.difficulty,
-            "correct_answer": question.correct_answer,
+            "reference_answer": question.reference_answer,
             "source": question.source,
             "quality_warning": question.quality_warning or "",
         },

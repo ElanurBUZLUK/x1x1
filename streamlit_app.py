@@ -47,29 +47,40 @@ with col1:
         if q.get("quality_warning"):
             st.warning(f"Veri kalite uyarısı: {q['quality_warning']}")
         st.markdown(f"### {q['question_text']}")
-        user_answer = st.radio(
+        user_answer = st.text_area(
             "Cevabın",
-            options=list(q["options"].keys()),
-            format_func=lambda key: f"{key}) {q['options'][key]}",
             key=q["question_id"],
+            height=140,
+            placeholder="Cevabını kısa ve açık şekilde yaz.",
         )
         response_time = st.number_input("Cevaplama süresi (sn)", min_value=0.0, value=45.0)
         if st.button("Cevabı gönder"):
             payload = {
                 "user_id": user_id,
                 "question_id": q["question_id"],
-                "user_answer": user_answer,
+                "question_text": q["question_text"],
+                "reference_answer": q["reference_answer"],
+                "student_answer": user_answer,
+                "grading_context": q.get("grading_context") or q["reference_answer"],
+                "accepted_aliases": q.get("accepted_aliases", []),
+                "key_concepts": q.get("key_concepts", []),
+                "wrong_if_mentions": q.get("wrong_if_mentions", []),
+                "partial_credit_rules": q.get("partial_credit_rules", []),
+                "lesson": q["lesson"],
+                "topic": q["topic"],
+                "difficulty": q["difficulty"],
                 "response_time": response_time,
                 "persist": True,
             }
             try:
-                response = requests.post(f"{API_BASE}/kpss/submit-answer", json=payload, timeout=120)
+                response = requests.post(f"{API_BASE}/kpss/submit-open-answer", json=payload, timeout=120)
                 response.raise_for_status()
                 result = response.json()
                 st.session_state.last_result = result
-                st.success("Doğru!" if result["is_correct"] else "Yanlış")
-                st.write(f"**Doğru cevap:** {result['correct_answer']}")
-                st.write(result["explanation"])
+                evaluation = result["evaluation"]
+                st.success(f"Değerlendirme: {evaluation['label']} | Skor: {evaluation['score']:.2f}")
+                st.write(f"**Referans cevap:** {evaluation['expected_answer']}")
+                st.write(evaluation["feedback"])
                 st.write(f"**Güncellenmiş seviye:** {result['updated_user_level_preview']:.2f}")
             except Exception as exc:
                 st.error(f"Cevap değerlendirilemedi: {exc}")

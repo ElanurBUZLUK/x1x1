@@ -5,13 +5,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from src.config import config
-from src.schemas import AnswerHistoryEvent, OpenAnswerAttemptEvent, StudentProfile, UserAnswerEvent
+from src.schemas import AnswerHistoryEvent, OpenAnswerAttemptEvent, StudentProfile
 
 
 def _parse_history_event(item: dict) -> AnswerHistoryEvent:
-    if item.get("answer_type") == "open_answer":
-        return OpenAnswerAttemptEvent.model_validate(item)
-    return UserAnswerEvent.model_validate(item)
+    return OpenAnswerAttemptEvent.model_validate(item)
 
 
 def load_user_history(path: Path | None = None) -> list[AnswerHistoryEvent]:
@@ -39,19 +37,12 @@ def append_answer_history_event(event: AnswerHistoryEvent, path: Path | None = N
     return history
 
 
-def append_user_answer_event(event: UserAnswerEvent, path: Path | None = None) -> list[AnswerHistoryEvent]:
-    """Geriye uyumlu çoktan seçmeli cevap ekleme yardımcısı."""
-    return append_answer_history_event(event, path)
-
-
 def _safe_mean(values: list[float], default: float = 0.0) -> float:
     return sum(values) / len(values) if values else default
 
 
 def _event_score(event: AnswerHistoryEvent) -> float:
-    if isinstance(event, OpenAnswerAttemptEvent):
-        return event.answer_score
-    return 1.0 if event.is_correct else 0.0
+    return event.answer_score
 
 
 def build_student_profile(history: list[AnswerHistoryEvent], user_id: str = "u_001") -> StudentProfile:

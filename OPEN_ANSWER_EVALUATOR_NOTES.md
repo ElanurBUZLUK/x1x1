@@ -1,10 +1,12 @@
 # Open Answer Evaluator Integration
 
-Bu ekleme, mevcut şıklı KPSS cevap kontrolünü bozmadan serbest metin / speech-to-text cevabı değerlendirmek için yapılmıştır.
+Bu proje açık uçlu KPSS cevap akışı için yapılandırılmıştır. Öğrenci cevapları serbest metin / speech-to-text olarak alınır ve referans cevaba göre puanlanır.
 
 ## Yeni endpoint
 
 `POST /kpss/evaluate-open-answer`
+
+Bu endpoint yalnızca değerlendirme yapar, öğrenci geçmişine kayıt yazmaz.
 
 Örnek request:
 
@@ -47,6 +49,20 @@ Bu ekleme, mevcut şıklı KPSS cevap kontrolünü bozmadan serbest metin / spee
 
 LLM doğru cevabı üretmez. Yalnızca verilen `reference_answer`, `accepted_aliases`, `key_concepts` ve `grading_context` alanlarına göre öğrenci cevabını yorumlar.
 
+## Submit endpoint
+
+`POST /kpss/submit-open-answer`
+
+Bu endpoint:
+
+```text
+1. Açık uçlu cevabı değerlendirir.
+2. OpenAnswerAttemptEvent oluşturur.
+3. History'ye kaydeder veya gönderilen history listesine ekler.
+4. Güncel öğrenci profilini döndürür.
+5. İstenirse bir sonraki öneriyi üretir.
+```
+
 ## Tasarım
 
 - Normalization
@@ -60,6 +76,6 @@ LLM doğru cevabı üretmez. Yalnızca verilen `reference_answer`, `accepted_ali
 - LLM-as-a-grader fallback
 - Pydantic JSON validation
 
-## Değişmeyen endpoint
+## Kaldırılan akış
 
-`POST /kpss/submit-answer` hala şıklı cevaplar için çalışır: `A / B / C / D / E`.
+`POST /kpss/submit-answer` ve A/B/C/D/E şıklı cevap kontrolü artık kullanılmaz.

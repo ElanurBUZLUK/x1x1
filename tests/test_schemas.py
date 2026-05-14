@@ -1,6 +1,3 @@
-import pytest
-from pydantic import ValidationError
-
 from src.schemas import KPSSQuestion
 
 
@@ -12,8 +9,9 @@ def _valid_question(**overrides):
         "topic": "Paragraf",
         "difficulty": 0.5,
         "question_text": "Ana düşünce nedir?",
-        "options": {"A": "a", "B": "b", "C": "c", "D": "d", "E": "e"},
-        "correct_answer": "B",
+        "reference_answer": "Ana düşünce, paragrafta asıl anlatılmak istenen temel fikirdir.",
+        "accepted_aliases": ["Ana fikir"],
+        "key_concepts": ["ana düşünce", "temel fikir"],
         "explanation": "Ana düşünce açıklaması.",
     }
     data.update(overrides)
@@ -24,14 +22,11 @@ def test_valid_question_schema_accepts_backward_compatible_defaults():
     question = KPSSQuestion.model_validate(_valid_question())
     assert question.exam == "KPSS"
     assert question.source == "kpss_question_bank"
-    assert question.correct_answer == "B"
+    assert question.reference_answer.startswith("Ana düşünce")
 
 
-def test_invalid_options_raise_validation_error():
-    with pytest.raises(ValidationError):
-        KPSSQuestion.model_validate(_valid_question(options={"A": "a", "B": "b"}))
-
-
-def test_invalid_answer_raises_validation_error():
-    with pytest.raises(ValidationError):
-        KPSSQuestion.model_validate(_valid_question(correct_answer="Z"))
+def test_embedding_text_contains_open_answer_fields():
+    question = KPSSQuestion.model_validate(_valid_question())
+    text = question.embedding_text()
+    assert "Referans cevap:" in text
+    assert "Ana kavramlar:" in text

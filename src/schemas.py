@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-
-OPTION_KEYS = {"A", "B", "C", "D", "E"}
+from pydantic import BaseModel, Field, model_validator
 
 
 class KPSSQuestion(BaseModel):
@@ -22,45 +20,24 @@ class KPSSQuestion(BaseModel):
     subtopic: str | None = None
     difficulty: float = Field(..., ge=0.0, le=1.0)
     question_text: str = Field(..., min_length=5)
-    options: dict[str, str]
-    correct_answer: str
+    reference_answer: str = Field(..., min_length=1)
+    accepted_aliases: list[str] = Field(default_factory=list)
+    key_concepts: list[str] = Field(default_factory=list)
+    grading_context: str = ""
+    wrong_if_mentions: list[str] = Field(default_factory=list)
+    partial_credit_rules: list[str] = Field(default_factory=list)
     explanation: str = Field(..., min_length=3)
     tags: list[str] = Field(default_factory=list)
     source: str = "kpss_question_bank"
     quality_warning: str | None = None
-
-    @field_validator("correct_answer")
-    @classmethod
-    def normalize_answer(cls, value: str) -> str:
-        value = value.strip().upper()
-        if value not in OPTION_KEYS:
-            raise ValueError("correct_answer A/B/C/D/E olmalı.")
-        return value
-
-    @field_validator("options")
-    @classmethod
-    def normalize_options(cls, value: dict[str, str]) -> dict[str, str]:
-        normalized = {str(k).strip().upper(): str(v).strip() for k, v in value.items()}
-        if set(normalized.keys()) != OPTION_KEYS:
-            raise ValueError("options tam olarak A/B/C/D/E şıklarını içermeli.")
-        empty = [key for key, text in normalized.items() if not text]
-        if empty:
-            raise ValueError(f"Boş şık metni var: {empty}")
-        return normalized
-
-    @model_validator(mode="after")
-    def validate_answer_in_options(self) -> "KPSSQuestion":
-        if self.correct_answer not in self.options:
-            raise ValueError("correct_answer options içinde bulunmalı.")
-        return self
 
     def topic_key(self) -> str:
         return f"{self.lesson}/{self.topic}"
 
     def embedding_text(self) -> str:
         """Embedding için semantik temsil metni üretir."""
-        options_text = " ".join(f"{key}) {val}" for key, val in sorted(self.options.items()))
         tags_text = ", ".join(self.tags)
+        concepts_text = ", ".join(self.key_concepts)
         return (
             f"Sınav: {self.exam}\n"
             f"Bölüm: {self.section}\n"
@@ -70,22 +47,10 @@ class KPSSQuestion(BaseModel):
             f"Zorluk: {self.difficulty}\n"
             f"Etiketler: {tags_text}\n"
             f"Soru: {self.question_text}\n"
-            f"Şıklar: {options_text}\n"
+            f"Referans cevap: {self.reference_answer}\n"
+            f"Ana kavramlar: {concepts_text}\n"
             f"Açıklama: {self.explanation}"
         )
-
-
-class UserAnswerEvent(BaseModel):
-    """Öğrencinin geçmişte çözdüğü bir soru kaydı."""
-
-    answer_type: Literal["multiple_choice"] = "multiple_choice"
-    user_id: str = "u_001"
-    question_id: str = Field(..., min_length=1)
-    lesson: str = Field(..., min_length=1)
-    topic: str = Field(..., min_length=1)
-    difficulty: float = Field(..., ge=0.0, le=1.0)
-    is_correct: bool
-    response_time: float | None = Field(default=None, ge=0.0)
 
 
 class OpenAnswerAttemptEvent(BaseModel):
@@ -109,7 +74,7 @@ class OpenAnswerAttemptEvent(BaseModel):
     response_time: float | None = Field(default=None, ge=0.0)
 
 
-AnswerHistoryEvent = OpenAnswerAttemptEvent | UserAnswerEvent
+AnswerHistoryEvent = OpenAnswerAttemptEvent
 
 
 class StudentProfile(BaseModel):

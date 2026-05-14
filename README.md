@@ -22,6 +22,7 @@ Bu proje: çözüm geçmişi + soru özellikleri → seviyeye uygun KPSS sorusu 
    - semantik benzerlik
    - daha önce çözülmemiş olma
 6. Seçilen soru için LLM ile açıklama / geri bildirim üretir.
+7. Öğrencinin açık uçlu cevabını referans cevaba göre puanlar ve profili günceller.
 
 ## Kurulum
 
@@ -69,7 +70,8 @@ http://127.0.0.1:8000/docs
 ```text
 POST /kpss/rebuild-index
 POST /kpss/recommend-question
-POST /kpss/submit-answer
+POST /kpss/evaluate-open-answer
+POST /kpss/submit-open-answer
 ```
 
 ## 4. Streamlit arayüzünü çalıştır
@@ -96,8 +98,12 @@ Her soru şu mantıkla tutulur:
   "subtopic": "Temel Hak ve Ödevler",
   "difficulty": 0.42,
   "question_text": "...",
-  "options": {"A": "...", "B": "...", "C": "...", "D": "...", "E": "..."},
-  "correct_answer": "B",
+  "reference_answer": "...",
+  "accepted_aliases": ["..."],
+  "key_concepts": ["..."],
+  "grading_context": "...",
+  "wrong_if_mentions": ["..."],
+  "partial_credit_rules": ["..."],
   "explanation": "...",
   "tags": ["anayasa", "temel haklar"]
 }
@@ -119,6 +125,7 @@ src/weakness_detector.py      # zayıf konu seçimi
 src/adaptive_retriever.py     # aday retrieval + öneri
 src/ranking.py                # Spotify-benzeri skor formülü
 src/explanation_generator.py  # LLM ile açıklama/geri bildirim
+src/open_answer_evaluator.py  # açık uçlu cevap puanlama
 main_recommend.py             # terminal demosu
 main_api.py                   # FastAPI servisi
 streamlit_app.py              # demo arayüz
@@ -138,6 +145,7 @@ final_score =
 ## Notlar
 
 - LLM yeni KPSS sorusu üretmez; mevcut soru bankasından seçilen soruyu açıklar.
+- Projede şıklı cevap akışı yoktur; cevaplar serbest metin olarak değerlendirilir.
 - Bu yaklaşım sınav sorularında doğruluk ve kontrol için daha güvenlidir.
 - İlk MVP content-based recommendation + RAG explanation mantığıyla kurulmuştur.
 - Daha ileri fazlarda collaborative filtering, IRT, Bayesian Knowledge Tracing veya bandit yaklaşımı eklenebilir.
