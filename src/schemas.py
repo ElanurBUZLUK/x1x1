@@ -78,6 +78,7 @@ class KPSSQuestion(BaseModel):
 class UserAnswerEvent(BaseModel):
     """Öğrencinin geçmişte çözdüğü bir soru kaydı."""
 
+    answer_type: Literal["multiple_choice"] = "multiple_choice"
     user_id: str = "u_001"
     question_id: str = Field(..., min_length=1)
     lesson: str = Field(..., min_length=1)
@@ -85,6 +86,30 @@ class UserAnswerEvent(BaseModel):
     difficulty: float = Field(..., ge=0.0, le=1.0)
     is_correct: bool
     response_time: float | None = Field(default=None, ge=0.0)
+
+
+class OpenAnswerAttemptEvent(BaseModel):
+    """Açık uçlu cevap değerlendirmesinden üretilen öğrenci deneme kaydı."""
+
+    answer_type: Literal["open_answer"] = "open_answer"
+    user_id: str = "u_001"
+    question_id: str = Field(..., min_length=1)
+    lesson: str = Field(..., min_length=1)
+    topic: str = Field(..., min_length=1)
+    difficulty: float = Field(..., ge=0.0, le=1.0)
+    is_correct: bool
+    answer_score: float = Field(..., ge=0.0, le=1.0)
+    evaluation_label: Literal["correct", "partially_correct", "incorrect", "uncertain"]
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    student_answer: str = Field(..., min_length=1)
+    reference_answer: str = Field(..., min_length=1)
+    matched_concepts: list[str] = Field(default_factory=list)
+    missing_concepts: list[str] = Field(default_factory=list)
+    feedback: str
+    response_time: float | None = Field(default=None, ge=0.0)
+
+
+AnswerHistoryEvent = OpenAnswerAttemptEvent | UserAnswerEvent
 
 
 class StudentProfile(BaseModel):

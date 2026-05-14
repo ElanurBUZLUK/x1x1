@@ -69,14 +69,14 @@ class TransformerAnswerScorer:
         self.max_length = 128
 
         try:
-            import torch
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
             from src.config import config
 
             model_path = Path(config.open_answer_transformer_model)
             if not model_path.exists():
                 return
+
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             self.max_length = config.open_answer_transformer_max_length
             if config.open_answer_transformer_device == "auto":

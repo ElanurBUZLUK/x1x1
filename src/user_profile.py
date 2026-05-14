@@ -5,19 +5,25 @@ from collections import defaultdict
 from pathlib import Path
 
 from src.config import config
-from src.schemas import StudentProfile, UserAnswerEvent
+from src.schemas import AnswerHistoryEvent, OpenAnswerAttemptEvent, StudentProfile, UserAnswerEvent
 
 
-def load_user_history(path: Path | None = None) -> list[UserAnswerEvent]:
+def _parse_history_event(item: dict) -> AnswerHistoryEvent:
+    if item.get("answer_type") == "open_answer":
+        return OpenAnswerAttemptEvent.model_validate(item)
+    return UserAnswerEvent.model_validate(item)
+
+
+def load_user_history(path: Path | None = None) -> list[AnswerHistoryEvent]:
     """Örnek kullanıcı çözüm geçmişini okur."""
     history_path = path or config.user_history_path
     if not history_path.exists():
         return []
     raw = json.loads(history_path.read_text(encoding="utf-8"))
-    return [UserAnswerEvent.model_validate(item) for item in raw]
+    return [_parse_history_event(item) for item in raw]
 
 
-def save_user_history(history: list[UserAnswerEvent], path: Path | None = None) -> None:
+def save_user_history(history: list[AnswerHistoryEvent], path: Path | None = None) -> None:
     """Çözüm geçmişini JSON dosyasına yazar. Demo backend için basit kalıcılık sağlar."""
     history_path = path or config.user_history_path
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -25,7 +31,7 @@ def save_user_history(history: list[UserAnswerEvent], path: Path | None = None) 
     history_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def append_user_answer_event(event: UserAnswerEvent, path: Path | None = None) -> list[UserAnswerEvent]:
+def append_answer_history_event(event: AnswerHistoryEvent, path: Path | None = None) -> list[AnswerHistoryEvent]:
     """Yeni cevap olayını geçmişe ekler ve güncel geçmişi döndürür."""
     history = load_user_history(path)
     history.append(event)
@@ -33,11 +39,22 @@ def append_user_answer_event(event: UserAnswerEvent, path: Path | None = None) -
     return history
 
 
+def append_user_answer_event(event: UserAnswerEvent, path: Path | None = None) -> list[AnswerHistoryEvent]:
+    """Geriye uyumlu çoktan seçmeli cevap ekleme yardımcısı."""
+    return append_answer_history_event(event, path)
+
+
 def _safe_mean(values: list[float], default: float = 0.0) -> float:
     return sum(values) / len(values) if values else default
 
 
-def build_student_profile(history: list[UserAnswerEvent], user_id: str = "u_001") -> StudentProfile:
+def _event_score(event: AnswerHistoryEvent) -> float:
+    if isinstance(event, OpenAnswerAttemptEvent):
+        return event.answer_score
+    return 1.0 if event.is_correct else 0.0
+
+
+def build_student_profile(history: list[AnswerHistoryEvent], user_id: str = "u_001") -> StudentProfile:
     """Spotify'daki kullanıcı zevki yerine öğrencinin öğrenme profilini çıkarır."""
     user_events = [event for event in history if event.user_id == user_id]
 
@@ -53,25 +70,25 @@ def build_student_profile(history: list[UserAnswerEvent], user_id: str = "u_001"
             solved_question_ids=[],
         )
 
-    correctness = [1.0 if event.is_correct else 0.0 for event in user_events]
-    recent = correctness[-10:]
+    scores = [_event_score(event) for event in user_events]
+    recent = scores[-10:]
     difficulties = [event.difficulty for event in user_events]
 
-    accuracy = _safe_mean(correctness)
+    accuracy = _safe_mean(scores)
     recent_accuracy = _safe_mean(recent)
     avg_difficulty = _safe_mean(difficulties, default=0.35)
 
     # Seviye sadece doğruluk değil, çözülen soru zorluğu ile birlikte değerlendirilir.
     overall_level = max(0.0, min(1.0, 0.50 * accuracy + 0.30 * recent_accuracy + 0.20 * avg_difficulty))
 
-    topic_events: dict[str, list[UserAnswerEvent]] = defaultdict(list)
+    topic_events: dict[str, list[AnswerHistoryEvent]] = defaultdict(list)
     for event in user_events:
         topic_key = f"{event.lesson}/{event.topic}"
         topic_events[topic_key].append(event)
 
     topic_mastery: dict[str, float] = {}
     for topic_key, events in topic_events.items():
-        topic_accuracy = _safe_mean([1.0 if event.is_correct else 0.0 for event in events])
+        topic_accuracy = _safe_mean([_event_score(event) for event in events])
         topic_difficulty = _safe_mean([event.difficulty for event in events], default=0.35)
         mastery = max(0.0, min(1.0, 0.70 * topic_accuracy + 0.30 * topic_difficulty))
         topic_mastery[topic_key] = mastery

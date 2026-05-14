@@ -8,18 +8,20 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.adaptive_retriever import AdaptiveQuestionRetriever
 from src.explanation_generator import ExplanationGenerator
-from src.feedback_updater import make_answer_event
+from src.feedback_updater import make_answer_event, make_open_answer_attempt_event
 from src.open_answer_evaluator import OpenAnswerEvaluator
 from src.question_ingest import build_kpss_vector_db
 from src.rag_engine import PDFRAGEngine
 from src.schemas import (
+    AnswerHistoryEvent,
     KPSSQuestion,
+    OpenAnswerAttemptEvent,
     OpenAnswerEvaluation,
     RecommendedQuestion,
     StudentProfile,
     UserAnswerEvent,
 )
-from src.user_profile import append_user_answer_event, build_student_profile, load_user_history
+from src.user_profile import append_answer_history_event, append_user_answer_event, build_student_profile, load_user_history
 
 app = FastAPI(
     title="KPSS Adaptive RAG API",
@@ -61,7 +63,7 @@ def get_pdf_engine() -> PDFRAGEngine:
 class RecommendQuestionRequest(BaseModel):
     user_id: str = "u_001"
     target_lesson: str | None = Field(default=None, description="Örn: Vatandaşlık, Tarih, Türkçe")
-    history: list[UserAnswerEvent] | None = Field(
+    history: list[AnswerHistoryEvent] | None = Field(
         default=None,
         description="Backend kendi kullanıcı geçmişini gönderirse burası kullanılır; boşsa sample_user_history okunur.",
     )
@@ -73,7 +75,7 @@ class SubmitAnswerRequest(BaseModel):
     question_id: str
     user_answer: str = Field(..., min_length=1, max_length=1)
     response_time: float | None = Field(default=None, ge=0.0)
-    history: list[UserAnswerEvent] | None = None
+    history: list[AnswerHistoryEvent] | None = None
     persist: bool = Field(
         default=True,
         description="history gönderilmediyse cevabı data/users/sample_user_history.json içine ekler.",
@@ -141,6 +143,34 @@ class EvaluateOpenAnswerRequest(BaseModel):
 
 class EvaluateOpenAnswerResponse(OpenAnswerEvaluation):
     pass
+
+
+class SubmitOpenAnswerRequest(EvaluateOpenAnswerRequest):
+    """Açık uçlu cevabı değerlendirir ve öğrenci geçmişine cevap denemesi olarak işler."""
+
+    question_id: str = Field(..., min_length=1)
+    lesson: str | None = Field(default=None, min_length=1)
+    topic: str | None = Field(default=None, min_length=1)
+    difficulty: float | None = Field(default=None, ge=0.0, le=1.0)
+    response_time: float | None = Field(default=None, ge=0.0)
+    history: list[AnswerHistoryEvent] | None = None
+    persist: bool = Field(
+        default=True,
+        description="history gönderilmediyse cevabı data/users/sample_user_history.json içine ekler.",
+    )
+    include_next_recommendation: bool = Field(
+        default=False,
+        description="Cevap sonrası güncel profile göre yeni soru önerisi de döndürür.",
+    )
+    target_lesson: str | None = Field(default=None, description="Yeni öneri istenirse ders filtresi.")
+
+
+class SubmitOpenAnswerResponse(BaseModel):
+    evaluation: OpenAnswerEvaluation
+    attempt_event: OpenAnswerAttemptEvent
+    updated_user_level_preview: float
+    updated_profile: StudentProfile
+    next_recommendation: RecommendedQuestion | None = None
 
 
 @lru_cache(maxsize=1)
@@ -241,6 +271,85 @@ def evaluate_open_answer(request: EvaluateOpenAnswerRequest) -> EvaluateOpenAnsw
             status_code=500,
             detail=f"Açık cevap değerlendirme hatası: {exc}",
         ) from exc
+
+
+def _resolve_open_answer_question_metadata(request: SubmitOpenAnswerRequest) -> tuple[str, str, float]:
+    if request.lesson is not None and request.topic is not None and request.difficulty is not None:
+        return request.lesson, request.topic, request.difficulty
+
+    question = get_adaptive_retriever().questions_by_id.get(request.question_id)
+    if question is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Soru bulunamadı: {request.question_id}. "
+                "Soru bankasında olmayan açık uçlu cevaplar için lesson, topic ve difficulty gönderilmeli."
+            ),
+        )
+
+    return question.lesson, question.topic, question.difficulty
+
+
+@app.post("/kpss/submit-open-answer", response_model=SubmitOpenAnswerResponse)
+def submit_open_answer(request: SubmitOpenAnswerRequest) -> SubmitOpenAnswerResponse:
+    """Açık uçlu cevabı değerlendirir, history'ye yazar ve güncel öğrenci profilini döndürür."""
+    try:
+        history = request.history if request.history is not None else load_user_history()
+        lesson, topic, difficulty = _resolve_open_answer_question_metadata(request)
+
+        evaluator = get_open_answer_evaluator(request.use_llm)
+        evaluation = evaluator.evaluate(
+            question_text=request.question_text,
+            reference_answer=request.reference_answer,
+            student_answer=request.student_answer,
+            grading_context=request.grading_context,
+            accepted_aliases=request.accepted_aliases,
+            key_concepts=request.key_concepts,
+            wrong_if_mentions=request.wrong_if_mentions,
+            partial_credit_rules=request.partial_credit_rules,
+            strictness_level=request.strictness_level,
+            min_correctness_score=request.min_correctness_score,
+            force_llm=request.force_llm,
+        )
+
+        attempt_event = make_open_answer_attempt_event(
+            user_id=request.user_id,
+            question_id=request.question_id,
+            lesson=lesson,
+            topic=topic,
+            difficulty=difficulty,
+            student_answer=request.student_answer,
+            reference_answer=request.reference_answer,
+            evaluation=evaluation,
+            response_time=request.response_time,
+        )
+
+        if request.history is None and request.persist:
+            updated_history = append_answer_history_event(attempt_event)
+        else:
+            updated_history = [*history, attempt_event]
+
+        updated_profile = build_student_profile(updated_history, user_id=request.user_id)
+        next_recommendation = (
+            get_adaptive_retriever().recommend(updated_profile, target_lesson=request.target_lesson)
+            if request.include_next_recommendation
+            else None
+        )
+
+        return SubmitOpenAnswerResponse(
+            evaluation=evaluation,
+            attempt_event=attempt_event,
+            updated_user_level_preview=updated_profile.overall_level,
+            updated_profile=updated_profile,
+            next_recommendation=next_recommendation,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Açık cevap kaydetme hatası: {exc}") from exc
 
 
 @app.post("/kpss/submit-answer", response_model=SubmitAnswerResponse)
