@@ -35,6 +35,20 @@ class RAGConfig:
     # Ders projesi Ollama çizgisinde olduğu için varsayılan yerel LLM.
     ollama_model: str = os.getenv("OLLAMA_MODEL", "gemma3:1b")
 
+    # Açık uçlu cevap puanlama için fine-tuned Transformer regression modeli.
+    # Colab çıktısını varsayılan olarak buraya koy:
+    # rag_project/models/answer_scoring_transformer_model/
+    open_answer_transformer_model: Path = Path(
+        os.getenv(
+            "OPEN_ANSWER_TRANSFORMER_MODEL",
+            str(PROJECT_ROOT / "models" / "answer_scoring_transformer_model"),
+        )
+    )
+    open_answer_transformer_max_length: int = int(
+        os.getenv("OPEN_ANSWER_TRANSFORMER_MAX_LENGTH", "128")
+    )
+    open_answer_transformer_device: str = os.getenv("OPEN_ANSWER_TRANSFORMER_DEVICE", "auto")
+
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
     top_k: int = int(os.getenv("TOP_K", "3"))

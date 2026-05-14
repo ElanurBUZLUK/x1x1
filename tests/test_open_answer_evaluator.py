@@ -1,6 +1,11 @@
 from src.open_answer_evaluator import OpenAnswerEvaluator
 
 
+class FakeTransformerScorer:
+    def predict_score_0_10(self, *, question: str, reference_answer: str, student_answer: str) -> float:
+        return 8.0
+
+
 def test_exact_open_answer_is_correct():
     evaluator = OpenAnswerEvaluator(use_llm=False)
 
@@ -87,3 +92,23 @@ def test_wrong_if_mentions_forces_incorrect():
     assert result.confidence == 0.95
     assert result.misconception is not None
     assert "Türkiye Büyük Millet Meclisi" in result.misconception
+
+
+def test_transformer_score_is_used_when_available_for_non_exact_answer():
+    evaluator = OpenAnswerEvaluator(use_llm=False)
+    evaluator.transformer_scorer = FakeTransformerScorer()
+
+    result = evaluator.evaluate(
+        question_text="Fotosentez nedir?",
+        reference_answer=(
+            "Fotosentez, bitkilerin ışık enerjisini kullanarak karbondioksit "
+            "ve sudan glikoz üretmesi ve oksijen açığa çıkarmasıdır."
+        ),
+        student_answer="Bitkiler güneş ışığıyla kendi besinini üretir.",
+        key_concepts=["ışık enerjisi", "besin üretimi"],
+    )
+
+    assert result.score == 0.8
+    assert result.label == "correct"
+    assert result.grading_basis == "transformer_regression_reference_answer_and_context"
+    assert result.used_llm is False

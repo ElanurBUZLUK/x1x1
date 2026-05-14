@@ -4,6 +4,7 @@ import json
 import re
 import unicodedata
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any
 
 from src.schemas import OpenAnswerEvaluation
@@ -58,6 +59,83 @@ _NUMBER_ALIASES = {
 }
 
 
+class TransformerAnswerScorer:
+    """Fine-tuned Hugging Face regression model wrapper for 0-10 answer scoring."""
+
+    def __init__(self) -> None:
+        self.model = None
+        self.tokenizer = None
+        self.device = None
+        self.max_length = 128
+
+        try:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+            from src.config import config
+
+            model_path = Path(config.open_answer_transformer_model)
+            if not model_path.exists():
+                return
+
+            self.max_length = config.open_answer_transformer_max_length
+            if config.open_answer_transformer_device == "auto":
+                device_name = "cuda" if torch.cuda.is_available() else "cpu"
+            else:
+                device_name = config.open_answer_transformer_device
+
+            self.device = torch.device(device_name)
+            self.tokenizer = AutoTokenizer.from_pretrained(str(model_path))
+            self.model = AutoModelForSequenceClassification.from_pretrained(str(model_path))
+            self.model.to(self.device)
+            self.model.eval()
+
+        except Exception:
+            self.model = None
+            self.tokenizer = None
+            self.device = None
+
+    @property
+    def is_available(self) -> bool:
+        return self.model is not None and self.tokenizer is not None and self.device is not None
+
+    @staticmethod
+    def build_input_text(question: str, reference_answer: str, student_answer: str) -> str:
+        return (
+            f"Soru: {question}\n"
+            f"Referans Cevap: {reference_answer}\n"
+            f"Öğrenci Cevabı: {student_answer}"
+        )
+
+    def predict_score_0_10(self, *, question: str, reference_answer: str, student_answer: str) -> float | None:
+        if not self.is_available:
+            return None
+
+        try:
+            import torch
+
+            input_text = self.build_input_text(question, reference_answer, student_answer)
+            encoding = self.tokenizer(
+                input_text,
+                max_length=self.max_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            )
+
+            input_ids = encoding["input_ids"].to(self.device)
+            attention_mask = encoding["attention_mask"].to(self.device)
+
+            with torch.inference_mode():
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                predicted = float(outputs.logits.squeeze().item()) * 10.0
+
+            return max(0.0, min(10.0, predicted))
+
+        except Exception:
+            return None
+
+
 class OpenAnswerEvaluator:
     """LLM destekli açık uçlu kısa cevap değerlendirici.
 
@@ -68,6 +146,7 @@ class OpenAnswerEvaluator:
     def __init__(self, use_llm: bool = True) -> None:
         self.use_llm = use_llm
         self.llm = None
+        self.transformer_scorer = TransformerAnswerScorer()
 
         if use_llm:
             try:
@@ -377,6 +456,63 @@ JSON şeması:
         except Exception:
             return None
 
+    def _transformer_evaluate(
+        self,
+        *,
+        question_text: str,
+        reference_answer: str,
+        student_answer: str,
+        key_concepts: list[str] | None,
+        min_correctness_score: float,
+    ) -> OpenAnswerEvaluation | None:
+        predicted_0_10 = self.transformer_scorer.predict_score_0_10(
+            question=question_text,
+            reference_answer=reference_answer,
+            student_answer=student_answer,
+        )
+        if predicted_0_10 is None:
+            return None
+
+        score = round(predicted_0_10 / 10.0, 4)
+        label, is_correct = self._label_from_score(score, min_correctness_score)
+        normalized_student = self.normalize_text(student_answer)
+        normalized_reference = self.normalize_text(reference_answer)
+        coverage, matched, missing = self.concept_coverage(student_answer, key_concepts or [])
+
+        distance_from_threshold = abs(score - min_correctness_score)
+        confidence = 0.65 + min(0.25, distance_from_threshold)
+        if coverage > 0:
+            confidence = max(confidence, min(0.90, 0.65 + 0.20 * coverage))
+
+        if label == "correct":
+            feedback = f"Doğru. Transformer puanı: {predicted_0_10:.1f}/10."
+        elif label == "partially_correct":
+            feedback = (
+                f"Kısmen doğru olabilir. Transformer puanı: {predicted_0_10:.1f}/10. "
+                f"Beklenen cevap: {reference_answer}."
+            )
+        else:
+            feedback = (
+                f"Yanlış ya da yetersiz. Transformer puanı: {predicted_0_10:.1f}/10. "
+                f"Beklenen cevap: {reference_answer}."
+            )
+
+        return OpenAnswerEvaluation(
+            label=label,
+            is_correct=is_correct,
+            score=score,
+            confidence=round(max(0.0, min(0.90, confidence)), 4),
+            normalized_student_answer=normalized_student,
+            normalized_reference_answer=normalized_reference,
+            matched_concepts=matched,
+            missing_concepts=missing,
+            misconception=None,
+            feedback=feedback,
+            expected_answer=reference_answer,
+            grading_basis="transformer_regression_reference_answer_and_context",
+            used_llm=False,
+        )
+
     def evaluate(
         self,
         *,
@@ -413,8 +549,21 @@ JSON şeması:
             min_correctness_score=min_correctness_score,
         )
 
+        if deterministic.misconception and deterministic.score <= 0.05:
+            return deterministic
+
         if deterministic.score >= 0.94 and deterministic.confidence >= 0.90 and not force_llm:
             return deterministic
+
+        transformer_result = self._transformer_evaluate(
+            question_text=question_text,
+            reference_answer=reference_answer,
+            student_answer=student_answer,
+            key_concepts=key_concepts,
+            min_correctness_score=min_correctness_score,
+        )
+        if transformer_result is not None and not force_llm:
+            return transformer_result
 
         llm_result = self._llm_evaluate(
             question_text=question_text,
